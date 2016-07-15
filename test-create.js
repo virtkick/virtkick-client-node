@@ -10,6 +10,12 @@ virtkick.createMachine({
   imageId: 5,
   planId: 3,
   subscriptionId: 1
-}).then(data => {
-  console.log('Machine created', data);
-});
+}, progressData => {
+  console.log('Progress data', progressData);
+}).then(machine => {
+  console.log('Machine', machine);
+  
+  return machine.destroy();
+}).then(() => {
+    console.log('Machine created and destroyed');
+})

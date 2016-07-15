@@ -1,5 +1,8 @@
 let humps = require('humps');
 let Promise = require('bluebird');
+let merge = require('merge');
+
+Promise.longStackTraces(true);
 
 function requireOptions(options, names) {
   names.forEach(name => {
@@ -7,6 +10,31 @@ function requireOptions(options, names) {
       throw new Error(`Options should contain: ${name}`)
     }
   });
+}
+let apiSymbol = Symbol('api');
+
+class VirtkickMachine {
+  constructor(api, data) {
+    this[apiSymbol] = api;
+  }
+  get api() {
+    return this[apiSymbol];
+  }
+  static fromMachineId(api, machineId) {
+    let machine = new VirtkickMachine(api);
+    machine.id = machineId;
+    return machine.refresh();
+  }
+  refresh() {
+    return this.api.get(`machines/${this.id}`).get('machine')
+      .then(data => {
+        merge(this, data);
+      }).then(() => this);
+  }
+  destroy() {
+    return this.api.delete(`machines/${this.id}`).bind(this.api)
+      .then(this.api.pollForFinished);
+  }
 }
 
 class VirtkickApi {
@@ -29,16 +57,19 @@ class VirtkickApi {
     });
   }
   
-  pollForFinished(progressId) {
-    return this.get(`progress/${progressId}`).then(res => {
-      if(!res.data.finished) {
-        return Promise.delay(100).then(() => this.pollForFinished(progressId));
+  pollForFinished(data, progressCb = () => {}) {
+    let progressId = data.progressId || data;
+    return this.get(`progress/${progressId}`).then(data => {
+      progressCb(data.data);
+      if(!data.finished) {
+        return Promise.delay(100)
+          .then(() => this.pollForFinished(progressId, progressCb));
       }
-      return res.data;
+      return data;
     });
   }
     
-  createMachine(options) {
+  createMachine(options, progressCb) {
     requireOptions(options, ['hostname', 'imageId', 'planId']);
     let {hostname, imageId, planId, subscriptionId} = options;
     
@@ -49,19 +80,38 @@ class VirtkickApi {
         planId: planId,
         subscriptionId: subscriptionId
       }
-    }).then(response => {
-      return this.pollForFinished(response.data.machine.progressId);
-    })
+    }).then(data => this.pollForFinished(data.machine.progressId, progressCb))
+      .get('data')
+      .then(data => {
+        return VirtkickMachine.fromMachineId(this, data.machineId);
+      });
   }
-};
+}
+
+class ApiError extends Error {
+  constructor(message, originalError) {
+    super(message);
+    Error.captureStackTrace( this, this.constructor )
+    this.originalError = originalError;
+    this.message = message;
+    this.name = 'ApiError';
+  }
+}
 
 ['post', 'get', 'put', 'delete'].forEach(httpMethod => {
   VirtkickApi.prototype[httpMethod] = function(endpoint, data, progressCb = () => {}) {
-    return this.axios[httpMethod](`${this.panelUrl}/api/${endpoint}`, data)
-      .then(Promise.resolve).catch(Promise.reject)
-      .then(data => {
-        return data;
-      });
+    return Promise.try(() => {
+      return this.axios[httpMethod](`${this.panelUrl}/api/${endpoint}`, data);
+    }).get('data').catch(err => err.response, err => {
+      let data = JSON.parse(err.response.data);
+      if(data.error) {
+        throw new ApiError(`${err.response.status} ${err.response.statusText} : ${err.config.url} : ${data.error}`, err);
+      }
+      if(data.errors) {
+        throw new ApiError(`${err.response.status} ${err.response.statusText} : ${err.config.url} : ${data.errors.join(', ')}`, err);
+      }
+      throw err;
+    });
   }
 });
 

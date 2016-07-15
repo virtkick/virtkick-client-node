@@ -11,6 +11,7 @@
   "dependencies": {
     "axios": "^0.13.0",
     "bluebird": "^3.4.1",
-    "humps": "^1.1.0"
+    "humps": "^1.1.0",
+    "merge": "^1.2.0"
   }
 }
