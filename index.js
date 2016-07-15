@@ -1,5 +1,5 @@
 let humps = require('humps');
-let Promise = require('bluebird');
+let Promise = require('bluebird').getNewLibraryCopy();
 let merge = require('merge');
 
 Promise.longStackTraces(true);
@@ -16,26 +16,32 @@ let apiSymbol = Symbol('api');
 class VirtkickMachine {
   constructor(api, data) {
     this[apiSymbol] = api;
+    merge(this, data);
   }
   get api() {
     return this[apiSymbol];
   }
   static fromMachineId(api, machineId) {
-    let machine = new VirtkickMachine(api);
-    machine.id = machineId;
+    let machine = new VirtkickMachine(api, {id: machineId});
     return machine.refresh();
   }
   refresh() {
     return this.api.get(`machines/${this.id}`).get('machine')
-      .then(data => {
-        merge(this, data);
-      }).then(() => this);
+      .then(data => merge(this, data));
   }
   destroy() {
     return this.api.delete(`machines/${this.id}`).bind(this.api)
       .then(this.api.pollForFinished);
   }
 }
+['start', 'pause', 'resume', 'stop', 'forceStop',
+'restart', 'forceRestart', 'resetRootPassword']
+  .forEach(action => {
+    VirtkickMachine.prototype[action] = function() {
+      return this.api.post(`machines/${this.id}/${humps.decamelize(action)}`).bind(this.api)
+        .then(this.api.pollForFinished).then(() => this.refresh())
+    }
+  });
 
 class VirtkickApi {
   constructor(options) {
@@ -57,18 +63,39 @@ class VirtkickApi {
     });
   }
   
-  pollForFinished(data, progressCb = () => {}) {
-    let progressId = data.progressId || data;
-    return this.get(`progress/${progressId}`).then(data => {
-      progressCb(data.data);
-      if(!data.finished) {
-        return Promise.delay(100)
-          .then(() => this.pollForFinished(progressId, progressCb));
-      }
-      return data;
-    });
+  pollForFinished(pollData, progressCb = () => {}) {
+    let progressId = pollData.progressId || pollData;
+    return this.get(`progress/${progressId}`, null, {fullResponse: true})
+      .then(response => {
+        let data = response.data;
+        if(data.error) {
+          throw new ApiError({
+            response: response,
+            config: response.config
+          }, data.error);
+        }
+        progressCb(data.data);
+        if(!data.finished) {
+          return Promise.delay(100)
+            .then(() => this.pollForFinished(progressId, progressCb));
+        }
+        return data.data;
+      });
   }
-    
+  
+  images() {
+    return this.get('images').get('images');
+  }
+  
+  images() {
+    return this.get('plans').get('plans');
+  }
+  
+  machines() {
+    return this.get('machines').get('machines')
+      .map(machine => new VirtkickMachine(this, machine));
+  }
+  
   createMachine(options, progressCb) {
     requireOptions(options, ['hostname', 'imageId', 'planId']);
     let {hostname, imageId, planId, subscriptionId} = options;
@@ -81,7 +108,6 @@ class VirtkickApi {
         subscriptionId: subscriptionId
       }
     }).then(data => this.pollForFinished(data.machine.progressId, progressCb))
-      .get('data')
       .then(data => {
         return VirtkickMachine.fromMachineId(this, data.machineId);
       });
@@ -89,31 +115,35 @@ class VirtkickApi {
 }
 
 class ApiError extends Error {
-  constructor(message, originalError) {
+  constructor(err, message) {
+    message = `${err.response.status} ${err.response.statusText} : ${err.config.url} : ${message}`;
     super(message);
     Error.captureStackTrace( this, this.constructor )
-    this.originalError = originalError;
+    this.originalError = err;
     this.message = message;
     this.name = 'ApiError';
   }
 }
 
 ['post', 'get', 'put', 'delete'].forEach(httpMethod => {
-  VirtkickApi.prototype[httpMethod] = function(endpoint, data, progressCb = () => {}) {
+  VirtkickApi.prototype[httpMethod] = function(endpoint, data, options = {}) {
+    let {fullResponse} = options;
     return Promise.try(() => {
       return this.axios[httpMethod](`${this.panelUrl}/api/${endpoint}`, data);
-    }).get('data').catch(err => err.response, err => {
+    }).then(response => {
+      if(fullResponse) return response;
+      return response.data;
+    }).catch(err => err.response, err => {
       let data = JSON.parse(err.response.data);
       if(data.error) {
-        throw new ApiError(`${err.response.status} ${err.response.statusText} : ${err.config.url} : ${data.error}`, err);
+        throw new ApiError(err, data.error);
       }
       if(data.errors) {
-        throw new ApiError(`${err.response.status} ${err.response.statusText} : ${err.config.url} : ${data.errors.join(', ')}`, err);
+        throw new ApiError(err, data.error.join(', '));
       }
       throw err;
     });
   }
 });
-
 
 module.exports = VirtkickApi;
