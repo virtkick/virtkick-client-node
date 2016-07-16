@@ -4,16 +4,25 @@ const Promise = require('bluebird');
 
 let virtkick;
 
+let commands = {};
+
+function registerCommand(command, handler) {
+  commands[command] = {
+    handler: handler
+  };
+}
+
 const readline = require('readline');
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   terminal: true,
-  completer(line) {;
-    const completions = 'list create help'.split(' ')
-    const hits = completions.filter((c) => { return c.indexOf(line) == 0 })
+  completer(line) {
+    let command = line.split(/\s+/)[0];
+    const completions = Object.keys(commands);
+    const hits = completions.filter((c) => { return c.indexOf(command) == 0 })
     // show all completions if none found
-    return [hits.length ? hits : completions, line]
+    return [hits.length ? hits : completions, command]
   }
 });
 
@@ -58,11 +67,22 @@ initializeApi().then(() => {
 });
 
 
-function pad(str, len) {
-  str = ' ' + str;
-  while(str.length < len) str += ' ';
-  return str;
-}
+class TablePrinter {
+  constructor(...lengths) {
+    this.lengths = lengths;
+  }
+  pad(str, len) {
+    str = ' ' + str;
+    while(str.length < len) str += ' ';
+    return str;
+  }
+  print(...entries) {
+    let str = entries.map((entry, i) => {
+      return this.pad(entry, this.lengths[i]);
+    }).join('|');
+    console.log(str);
+  }
+};
 
 function askForImage() {
   return virtkick.images().then(images => {
@@ -101,48 +121,92 @@ function askForPlan() {
   });
 }
 
+registerCommand('show', (num) => {
+  let printer = new TablePrinter(16, 50);
+  let machinePromise;
+  if(num.match(/^\d+$/)) {
+    machinePromise = virtkick.machine(num);
+  } else {
+    machinePromise = virtkick.machines().then(machines => {
+      let matches =  machines.filter(machine => machine.hostname.match(new RegExp(num)));
+      if(matches.length > 1) {
+        console.log('Multiple matches: ', matches.map(machine => machine.hostname).join(', '));
+        return null;
+      }
+      if(matches.length) {
+        return matches[0];
+      }
+      throw new ApiError(`Cannot find machine matching your query: ${num}`);
+    });
+  }
+  return machinePromise.then(machine => {
+    if(machine == null) return;
+    
+    let fields = {
+      id: true,
+      hostname: true,
+      status: true,
+      ip: () => machine.ips[0].address,
+      rootPassword: true,
+      cpuUsage: true,
+      cpus: true
+    }
+    console.log(machine);
+    for(let field of Object.keys(fields)) {
+      printer.print(...[field, fields[field] === true ? machine[field] : fields[field]()]);
+    }
+  });
+});
+
+registerCommand('list', () => {
+  return virtkick.machines().then(machines => {
+    if(!machines.length) {
+      return console.log(`You don't have any machines yet, why don't you create one?`);
+    }
+    let printer = new TablePrinter(6, 20, 16, 10);
+    printer.print('id', 'hostname', 'ip', 'status');
+    machines.map(machine => {
+      printer.print(machine.id, machine.hostname, machine.ips[0].address, machine.status);
+    });
+  });
+});
+
+registerCommand('help', () => {
+  return console.log('List of commands: create list');
+})
+
+registerCommand('create', () => {
+  return askForImage().then(image => {
+    return askForPlan().then(plan => {
+      return question('Enter hostname: ').then(hostname => {
+        console.log('Creating your machine...');
+        return virtkick.createMachine({
+          hostname: hostname,
+          imageId: image.id,
+          planId: plan.id
+        }).then(() => {
+          console.log('Machine created');
+        });
+      });
+    })
+  })
+})
+
 function setupPrompt() {
   rl.prompt('');
   rl.on('line', (line) => {
     Promise.try(() => {
-      switch(line.trim()) {
-        case 'list':
-          return virtkick.machines().then(machines => {
-            if(!machines.length) {
-              return console.log(`You don't have any machines yet, why don't you create one?`);
-            }
-            console.log(`${pad('id', 6)}|${pad('hostname', 20)}|${pad('ip', 16)}|${pad('status', 10)}`)
-            machines.map(machine => {
-              console.log(`${pad(machine.id, 6)}|${pad(machine.hostname, 20)}|${pad(machine.ips[0].address, 16)}|${pad(machine.status, 10)}`)
-            });
-          });
-        case 'help':
-          return console.log('List of commands: create list');
-        case 'create':
-          return askForImage().then(image => {
-            return askForPlan().then(plan => {
-              return question('Enter hostname: ').then(hostname => {
-                console.log('Creating your machine...');
-                return virtkick.createMachine({
-                  hostname: hostname,
-                  imageId: image.id,
-                  planId: plan.id
-                }).then(() => {
-                  console.log('Machine created');
-                });
-              });
-            })
-          })
-          break;
-        default:
-          console.log(`Unknown command: ${line} `);
-          break;
+      let [command, ...args] = line.trim().split(/\s+/);
+      if(commands[command]) {
+        return commands[command].handler(...args);
       }
+      console.log(`Unknown command: ${line} `);
+      return commands['help'].handler();
     })
     .catch(err => console.error('Error:', err.message))
     .finally(() => rl.prompt());
   }).on('close', () => {
-    console.log("kthx, Keep on virtkickin'");
+    console.log("\nkthx, Keep on virtkickin'");
     process.exit(0);
   });
 }

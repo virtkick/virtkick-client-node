@@ -95,6 +95,11 @@ class VirtkickApi {
     return this.get('plans').get('plans');
   }
   
+  machine(id) {
+    return this.get(`machines/${id}`).get('machine')
+      .then(machine => new VirtkickMachine(this, machine));
+  }
+  
   machines() {
     return this.get('machines').get('machines')
       .map(machine => new VirtkickMachine(this, machine));
