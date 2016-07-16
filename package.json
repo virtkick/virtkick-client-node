@@ -1,8 +1,11 @@
 {
   "name": "virtkick",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "Control virtkick hosting via Node",
   "main": "index.js",
+  "bin": {
+    "virtkick": "virtkick-cli.js"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },

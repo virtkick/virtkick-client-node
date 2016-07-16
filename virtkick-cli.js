@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 const VirtkickApi = require('./');
 const Promise = require('bluebird');
 
@@ -30,11 +31,11 @@ function question(ask) {
 }
 
 function getApiKey() {
-  return Promise.try(() => process.env.API_KEY || question('Enter API Key: '));
+  return Promise.try(() => process.env.API_KEY || question('Enter API Key (or set env var API_KEY): '));
 }
 
 function getPanelUrl() {
-  return Promise.try(() => process.env.PANEL_URL || question('Enter panel URL: '));
+  return Promise.try(() => process.env.PANEL_URL || question('Enter panel URL (or set env var PANEL_URL): '));
 }
 
 function initializeApi() {
@@ -110,9 +111,9 @@ function setupPrompt() {
             if(!machines.length) {
               return console.log(`You don't have any machines yet, why don't you create one?`);
             }
-            console.log(`${pad('id', 6)}|${pad('hostname', 20)}|${pad('ip', 16)}`)
+            console.log(`${pad('id', 6)}|${pad('hostname', 20)}|${pad('ip', 16)}|${pad('status', 10)}`)
             machines.map(machine => {
-              console.log(`${pad(machine.id, 6)}|${pad(machine.hostname, 20)}|${pad(machine.ips[0].address)}`)
+              console.log(`${pad(machine.id, 6)}|${pad(machine.hostname, 20)}|${pad(machine.ips[0].address, 16)}|${pad(machine.status, 10)}`)
             });
           });
         case 'help':
