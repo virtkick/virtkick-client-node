@@ -83,11 +83,15 @@ class VirtkickApi {
       });
   }
   
+  user() {
+    return this.get('user').get('user');
+  }
+  
   images() {
     return this.get('images').get('images');
   }
   
-  images() {
+  plans() {
     return this.get('plans').get('plans');
   }
   
@@ -139,7 +143,7 @@ class ApiError extends Error {
         throw new ApiError(err, data.error);
       }
       if(data.errors) {
-        throw new ApiError(err, data.error.join(', '));
+        throw new ApiError(err, data.errors.join(', '));
       }
       throw err;
     });
