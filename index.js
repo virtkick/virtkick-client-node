@@ -156,3 +156,4 @@ class ApiError extends Error {
 });
 
 module.exports = VirtkickApi;
+module.exports.ApiError = ApiError;

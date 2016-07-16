@@ -1,6 +1,6 @@
 {
   "name": "virtkick",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Control virtkick hosting via Node",
   "main": "index.js",
   "bin": {
