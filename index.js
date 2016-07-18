@@ -100,6 +100,11 @@ class VirtkickApi {
       .then(machine => new VirtkickMachine(this, machine));
   }
   
+  subscriptions(options = {}) {
+    let {unused = 'false'} = options;
+    return this.get(`subscriptions?unused=${unused}`).get('subscriptions');
+  }
+  
   machines() {
     return this.get('machines').get('machines')
       .map(machine => new VirtkickMachine(this, machine));

@@ -39,10 +39,7 @@ const rl = readline.createInterface({
             let {hits, completions} = result;
             line = [command, ...args].join(' ');
             args.pop();
-            hits = hits.map(hit => {
-              return [command, ...args, hit].join(' ');
-            })
-            return [hits.length ? hits : completions, line];
+            return [hits.length ? hits : completions, arg];
           });
         }
       }
@@ -64,6 +61,9 @@ rl.setPrompt('> ')
 function question(ask) {
   return new Promise((resolve, reject) => {
     rl.question(ask, resolve);
+  }).tap(() => {
+    rl.history = rl.history.slice(1);
+    rl.pause();
   });
 }
 
@@ -130,15 +130,34 @@ function askForImage() {
 }
 
 function askForPlan() {
-  return virtkick.plans().then(plans => {
+  return Promise.all([
+    virtkick.plans(),
+    virtkick.subscriptions({unused: true})])
+    .spread((plans, subscriptions) => {
     let planMap = {};
+  
+    plans.forEach(plan => {
+      planMap[plan.id] = plan;
+    });
+
+    subscriptions.forEach(subscription => {
+      if(subscription.plan.id) {
+        planMap[subscription.plan.id].subscription = subscription;
+      }
+    });
+        
     let planList = plans.map(plan => {
       planMap[plan.id] = plan;
       let {cpu, memory, storage, storageType} = plan.params;
       storage /= 1024 * 1024 * 1024;
       let planName = plan.name || `CPU ${cpu} / RAM ${memory}GB / ${storageType} ${storage}GB`
-      return `${plan.id}) ${planName} - $${plan.price.value/100}`;
+      let price = `$${plan.price.value/100}`;
+      if(plan.subscription) {
+        price = 'Already paid';
+      }
+      return `${plan.id}) ${planName} - ${price}`;
     }).join('\n');
+      
     
     return question(`${planList}\nChoose plan: `).then(planId => {
       if(!planMap[planId]) {
@@ -215,7 +234,7 @@ registerCommand('show', {
 });
 
 ['start', 'pause', 'resume', 'stop', 'forceStop',
-'restart', 'forceRestart', 'resetRootPassword'].forEach(command => {
+'restart', 'forceRestart', 'resetRootPassword', 'destroy'].forEach(command => {
   registerCommand(command, {
     handler(hostname) {
       let machinePromise = matchMachine(hostname);
@@ -230,6 +249,18 @@ registerCommand('show', {
   });
 });
 
+registerCommand('destroyAll', {
+  handler(arg) {
+    if(arg !== 'really') {
+      throw new CliError(`Write 'destroyAll really'`);
+    }
+    return Promise.all(virtkick.machines()).map(machine => {
+      return machine.destroy();
+    }).then(() => {
+      console.log('All machines destroyed');
+    });
+  }
+});
 
 registerCommand('list', {
   handler() {
@@ -248,7 +279,7 @@ registerCommand('list', {
 
 registerCommand('help', {
   handler() {
-    return console.log('List of commands: create list');
+    return console.log(`List of commands: ${Object.keys(commands).join(' ')}`);
   }
 });
 
@@ -257,13 +288,16 @@ registerCommand('create', {
     return askForImage().then(image => {
       return askForPlan().then(plan => {
         return question('Enter hostname: ').then(hostname => {
-          console.log('Creating your machine...');
+          process.stdout.write('Creating your machine...');
+          
+          let t1 = new Date().getTime();;
           return virtkick.createMachine({
             hostname: hostname,
             imageId: image.id,
-            planId: plan.id
-          }).then(() => {
-            console.log('Machine created');
+            planId: plan.id,
+            subscriptionId: plan.subscription ? plan.subscription.id : undefined
+          }, () => process.stdout.write('.')).then(() => {
+            console.log(`OK (in ${(new Date().getTime() - t1)/1000}s)`);
           });
         });
       })
@@ -275,6 +309,7 @@ function setupPrompt() {
   rl.prompt('');
   rl.on('line', (line) => {
     Promise.try(() => {
+      rl.pause();
       let [command, ...args] = line.trim().split(/\s+/);
       let commandInfo = commands[command];
       if(commandInfo) {
