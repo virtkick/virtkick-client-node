@@ -86,15 +86,6 @@ function initializeApi() {
   });
 }
 
-initializeApi().then(() => {
-  virtkick.user().then(user => {
-    console.log(`Howdy ${user.email}!`)
-    
-    setupPrompt();
-  });
-});
-
-
 class TablePrinter {
   constructor(...lengths) {
     this.lengths = lengths;
@@ -112,7 +103,7 @@ class TablePrinter {
   }
 };
 
-function askForImage() {
+function askForImage(preselectedImage) {
   return virtkick.images().then(images => {
     let imageMap = {};
     let imageList = images.map(image => {
@@ -120,16 +111,17 @@ function askForImage() {
       return `${image.id}) ${image.distribution.name} ${image.version} (${image.imageType})`;
     }).join('\n');
     
-    return question(`${imageList}\nChoose image: `).then(imageId => {
-      if(!imageMap[imageId]) {
-        throw new CliError(`Unknown image: ${imageId}`);
-      }
-      return imageMap[imageId];
-    });
+    return Promise.resolve(preselectedImage || question(`${imageList}\nChoose image: `))
+      .then(imageId => {
+        if(!imageMap[imageId]) {
+          throw new CliError(`Unknown image: ${imageId}`);
+        }
+        return imageMap[imageId];
+      });
   });
 }
 
-function askForPlan() {
+function askForPlan(preselectedPlan) {
   return Promise.all([
     virtkick.plans(),
     virtkick.subscriptions({unused: true})])
@@ -159,7 +151,7 @@ function askForPlan() {
     }).join('\n');
       
     
-    return question(`${planList}\nChoose plan: `).then(planId => {
+    return Promise.resolve(preselectedPlan || question(`${planList}\nChoose plan: `)).then(planId => {
       if(!planMap[planId]) {
         throw new CliError(`Unknown plan: ${planId}`);
       }
@@ -284,10 +276,10 @@ registerCommand('help', {
 });
 
 registerCommand('create', {
-  handler() {
-    return askForImage().then(image => {
-      return askForPlan().then(plan => {
-        return question('Enter hostname: ').then(hostname => {
+  handler(preselectedImage, preselectedPlan, preenteredHostname) {
+    return askForImage(preselectedImage).then(image => {
+      return askForPlan(preselectedPlan).then(plan => {
+        return Promise.resolve(preenteredHostname || question('Enter hostname: ')).then(hostname => {
           process.stdout.write('Creating your machine...');
           
           let t1 = new Date().getTime();;
@@ -305,25 +297,29 @@ registerCommand('create', {
   }
 });
 
+function processLine(line) {
+  return Promise.try(() => {
+    rl.pause();
+    let [command, ...args] = line.trim().split(/\s+/);
+    let commandInfo = commands[command];
+    if(commandInfo) {
+      if(commandInfo.params) {
+        if(args.length < commandInfo.params.length) {
+          throw new CliError(`Usage: ${command} ${commandInfo.params.map((param, i) => `<${param.name || `arg${i+1}`}>`).join(' ')}`);
+        }
+      }
+      
+      return commandInfo.handler(...args);
+    }
+    console.log(`Unknown command: ${line} `);
+    return commands['help'].handler();
+  });
+}
+
 function setupPrompt() {
   rl.prompt('');
   rl.on('line', (line) => {
-    Promise.try(() => {
-      rl.pause();
-      let [command, ...args] = line.trim().split(/\s+/);
-      let commandInfo = commands[command];
-      if(commandInfo) {
-        if(commandInfo.params) {
-          if(args.length < commandInfo.params.length) {
-            throw new CliError(`Usage: ${command} ${commandInfo.params.map((param, i) => `<${param.name || `arg${i+1}`}>`).join(' ')}`);
-          }
-        }
-        
-        return commandInfo.handler(...args);
-      }
-      console.log(`Unknown command: ${line} `);
-      return commands['help'].handler();
-    })
+    return processLine()
     .catch(ApiError, err => console.error('ApiError:', err.message))
     .catch(CliError, err => console.error('Error:', err.message))
     .catch(err => console.error(err.stack))
@@ -333,3 +329,19 @@ function setupPrompt() {
     process.exit(0);
   });
 }
+
+initializeApi().then(() => {
+  virtkick.user().then(user => {
+    console.log(`Howdy ${user.email}!`)
+    
+    if(process.argv.length > 2) {
+      let [arg1, arg2, ...args] = process.argv;
+      processLine(args.join(' ')).then(() => process.exit(0)).catch(err => {
+        console.error(err);
+        process.exit(1);
+      });
+    } else {
+      setupPrompt();
+    }
+  });
+});
