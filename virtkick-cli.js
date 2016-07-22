@@ -319,7 +319,7 @@ function processLine(line) {
 function setupPrompt() {
   rl.prompt('');
   rl.on('line', (line) => {
-    return processLine()
+    return processLine(line)
     .catch(ApiError, err => console.error('ApiError:', err.message))
     .catch(CliError, err => console.error('Error:', err.message))
     .catch(err => console.error(err.stack))
