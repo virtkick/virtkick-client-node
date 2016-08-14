@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 const VirtkickApi = require('./');
 const Promise = require('bluebird');
+Promise.longStackTraces();
 const ApiError = VirtkickApi.ApiError;
+const fs = Promise.promisifyAll(require('fs'));
+const pathJoin = require('path').join;
+const merge = require('merge');
 
+const env = process.env;
 
 class CliError extends Error {
   constructor(message) {
@@ -67,22 +72,89 @@ function question(ask) {
   });
 }
 
+function questionBool(ask) {
+  return question(`${ask} (Y/n): `).then(answer => {
+    answer = answer.toLowerCase();
+    if(answer !== 'y' && answer !== 'n') {
+      return questionBool(ask);
+    }
+    return answer === 'y';
+  });
+}
+
+class Config {
+  constructor(data) {
+    this.data = data;
+  }
+  
+  get(key) {
+    return this.data[key];
+  }
+  
+  set(key, value) {
+    this.data[key] = value;
+  }
+  
+  get isEmpty() {
+    return Object.keys(this.data).length === 0;
+  }
+  
+  static get configPath() {
+    return pathJoin(require('osenv').home(), '.virtkick');
+  }
+
+  save() {
+    return Config.save(this.data);
+  }
+  
+  static save(data) {
+    return fs.writeFileAsync(this.configPath, JSON.stringify(data));
+  }
+  
+  static load() {
+    return fs.readFileAsync(this.configPath)
+      .then(JSON.parse)
+      .catch({code: 'ENOENT'}, () => ({}))
+      .then(data => new Config(data));
+  }
+};
+
+let config; // initialized later
+// TODO: create CliController and move it there
+
 function getApiKey() {
-  return Promise.try(() => process.env.API_KEY || question('Enter API Key (or set env var API_KEY): '));
+  return Promise.try(() => config.get('apiKey') || env.API_KEY || question('Enter API Key (or set env var API_KEY): '));
 }
 
 function getPanelUrl() {
-  return Promise.try(() => process.env.PANEL_URL || question('Enter panel URL (or set env var PANEL_URL): '));
+  return Promise.try(() => config.get('panelUrl') || env.PANEL_URL || question('Enter panel URL (or set env var PANEL_URL): '));
 }
 
 function initializeApi() {
-  return getApiKey().then(apiKey => {
-    return getPanelUrl().then(panelUrl => {
-      virtkick = new VirtkickApi({
-        apiKey: apiKey,
-        panelUrl: panelUrl
-      });
-    })
+  return Config.load().then(_config => {
+    config = _config;
+    return getApiKey().then(apiKey => {
+      return getPanelUrl().then(panelUrl => {
+        virtkick = new VirtkickApi({
+          apiKey: apiKey,
+          panelUrl: panelUrl
+        });
+        return virtkick.user().tap(() => {
+          if(!config.get('apiKey') || !config.get('panelUrl')) {
+            return Promise.resolve(env.SAVE_KEYS || questionBool(`Wanna save those keys? (config will be saved to ${Config.configPath})`)).then(saveKeys => {
+              if(!saveKeys) {
+                return;
+              }
+              config.set('apiKey', apiKey);
+              config.set('panelUrl', panelUrl);
+              return config.save().then(() => {
+                console.log(`Configuration saved to ${Config.configPath}`);
+              });
+            });
+          }
+        });
+      })
+    });
   });
 }
 
@@ -332,7 +404,7 @@ function setupPrompt() {
 
 initializeApi().then(() => {
   virtkick.user().then(user => {
-    console.log(`Howdy ${user.email}!`)
+    console.log(`Howdy ${user.email}! Welcome to: ${virtkick.panelUrl}`);
     
     if(process.argv.length > 2) {
       let [arg1, arg2, ...args] = process.argv;

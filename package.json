@@ -1,6 +1,6 @@
 {
   "name": "virtkick",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "Control virtkick hosting via Node",
   "main": "index.js",
   "bin": {
@@ -15,6 +15,7 @@
     "axios": "^0.13.0",
     "bluebird": "^3.4.1",
     "humps": "^1.1.0",
-    "merge": "^1.2.0"
+    "merge": "^1.2.0",
+    "osenv": "^0.1.3"
   }
 }
